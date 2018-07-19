@@ -321,7 +321,7 @@ export class ZeroLite {
      * @param event 事件类名
      */
     emit(ZeroLiteEventClass: new () => ZeroLiteEvent): void
-    emit(arg: any): void {
+    emit(arg: ZeroLiteEvent | (new () => ZeroLiteEvent)): void {
         let event: ZeroLiteEvent
         if (arg instanceof ZeroLiteEvent) {
             event = arg
