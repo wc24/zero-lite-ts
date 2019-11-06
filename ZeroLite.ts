@@ -1,6 +1,7 @@
 //------------------------------------
 // 蓝面包 wc24@qq.com
-// zero设计模式
+// zero 基于es6的对象事件机件
+// 2019.11.16
 //------------------------------------
 /**
  * 链表迭代接口
@@ -221,16 +222,24 @@ class EventSet<T extends ZeroLiteEvent> extends ZeroChain {
     }
 };
 
+export type ZLEC = new (...args: any[]) => ZeroLiteEvent
+export type ZLECT<T extends ZeroLiteEvent> = new (...args: any[]) => T
+export type ZLC = new (...args: any[]) => ZeroLite
+export type ZLCT<T extends ZeroLite> = new (...args: any[]) => T
+
+/**
+ * 事件信息体
+ */
 export class ZeroLiteEvent {
     public target: ZeroLite | null = null;
     private _isStop: boolean
     private _isUse: boolean
-    private _type: new () => ZeroLiteEvent
-    constructor(type?: new () => ZeroLiteEvent) {
-        if (type == null) {
-            this._type = <new () => ZeroLiteEvent>this.constructor
+    private _base: ZLEC
+    constructor(base?: ZLEC) {
+        if (base == null) {
+            this._base = <ZLEC>this.constructor
         } else {
-            this._type = type
+            this._base = base
         }
         this._isStop = false
         this._isUse = false
@@ -264,8 +273,8 @@ export class ZeroLiteEvent {
     /**
      * 事件对应的类名
      */
-    get type(): new () => ZeroLiteEvent {
-        return this._type;
+    get base(): ZLEC {
+        return this._base;
     }
 }
 /**
@@ -280,36 +289,62 @@ export class ZeroLiteEvent {
  * 链表优化
  */
 export class ZeroLite {
-    private pool: WeakMap<new () => ZeroLiteEvent, EventSet<any>>
-    private static instanceMap: WeakMap<new () => ZeroLite, ZeroLite> = new WeakMap()
+    private pool: WeakMap<ZLEC, EventSet<any>>
+    private static instanceMap: Map<ZLC, [ZeroLite, ((instance: ZeroLite) => void) | undefined]> = new Map()
     /**
      * 获取单例
      * @param zeroLiteClass 类名
      */
-    static getZeroLite<T extends ZeroLite>(zeroLiteClass: new () => T): T {
+    static getZeroLite<T extends ZeroLite>(zeroLiteClass: ZLCT<T>, initCallback?: (instance: T) => void): T {
         let zeroLite: ZeroLite
         if (this.instanceMap.has(zeroLiteClass)) {
-            zeroLite = this.instanceMap.get(zeroLiteClass)!
+            [zeroLite] = this.instanceMap.get(zeroLiteClass)!
         } else {
             zeroLite = new zeroLiteClass()
-            this.instanceMap.set(zeroLiteClass, zeroLite)
+            if (initCallback != null) {
+                initCallback.call(zeroLite, zeroLite as T)
+            }
+            this.instanceMap.set(zeroLiteClass, [zeroLite, initCallback as ((instance: ZeroLite) => void)])
         }
         return <T>zeroLite
     }
+    /**
+     * 清空单例池
+     */
+    static clear() {
+        this.instanceMap = new Map()
+    }
+    /**
+     * 重建单例池
+     */
+    static reset(isCreate: boolean = false) {
+        this.instanceMap.forEach(([zeroLite, initCallback], zeroLiteClass) => {
+            if (initCallback != null) {
+                let instance: ZeroLite
+                if (isCreate) {
+                    instance = new zeroLiteClass()
+                } else {
+                    instance = zeroLite
+                }
+                initCallback.call(instance, instance)
+            }
+        })
+    }
+
     constructor() {
         this.pool = new WeakMap()
     }
     /**
      * 注册事件
-     * @param zeroLiteClass 类名
+     * @param zlec 类名
      * @param callBack 事件处理函数
      * @param priority 优于级默认为0 越小越先执行
      */
-    on<T extends ZeroLiteEvent>(zeroLiteClass: (new () => T), callBack: (event: T) => void, priority: number = 0): void {
-        if (!this.pool.has(zeroLiteClass)) {
-            this.pool.set(zeroLiteClass, new EventSet());
+    on<T extends ZeroLiteEvent>(zlec: ZLECT<T>, callBack: (event: T) => void, priority: number = 0): void {
+        if (!this.pool.has(zlec)) {
+            this.pool.set(zlec, new EventSet());
         }
-        this.pool.get(zeroLiteClass)!.addEvent(callBack, priority)
+        this.pool.get(zlec)!.addEvent(callBack, priority)
     };
     /**
      * 通知事件
@@ -320,8 +355,8 @@ export class ZeroLite {
      * 通知事件
      * @param event 事件类名
      */
-    emit(ZeroLiteEventClass: new () => ZeroLiteEvent): void
-    emit(arg: ZeroLiteEvent | (new () => ZeroLiteEvent)): void {
+    emit(zlec: ZLEC): void
+    emit(arg: ZeroLiteEvent | ZLEC): void {
         let event: ZeroLiteEvent
         if (arg instanceof ZeroLiteEvent) {
             event = arg
@@ -329,8 +364,8 @@ export class ZeroLite {
             event = new arg()
         }
         event.use(this)
-        if (this.pool.has(event.type)) {
-            let EventSet = this.pool.get(event.type)!
+        if (this.pool.has(event.base)) {
+            let EventSet = this.pool.get(event.base)!
             EventSet.forEach((chainNode) => {
                 chainNode.data(event);
                 return event.isStopped;
@@ -342,30 +377,30 @@ export class ZeroLite {
      * @param zeroLiteClass 类名
      * @param callBack 事件处理函数
      */
-    off<T extends ZeroLiteEvent>(zeroLiteClass: (new () => T), callBack: (event?: T) => void): void {
-        if (this.pool.has(zeroLiteClass)) {
-            this.pool.get(zeroLiteClass)!.del(callBack)
+    off<T extends ZeroLiteEvent>(zlec: ZLECT<T>, callBack: (event?: T) => void): void {
+        if (this.pool.has(zlec)) {
+            this.pool.get(zlec)!.del(callBack)
         }
     }
     /**
      * 判断是否含有事件
-     * @param zeroLiteClass 类名
+     * @param zlec 类名
      */
-    has(zeroLiteClass: new () => ZeroLiteEvent): boolean {
-        return this.pool.has(zeroLiteClass)
+    has(zlec: ZLEC): boolean {
+        return this.pool.has(zlec)
     }
     /**
      * 判断是否含有指字事件处理函数
-     * @param zeroLiteClass 类名
+     * @param zlec 类名
      */
-    check(zeroLiteClass: new () => ZeroLiteEvent, callBack: (event?: ZeroLiteEvent) => void): boolean {
-        return this.pool.has(zeroLiteClass) && this.pool.get(zeroLiteClass)!.has(callBack)
+    check(zlec: ZLEC, callBack: (event?: ZeroLiteEvent) => void): boolean {
+        return this.pool.has(zlec) && this.pool.get(zlec)!.has(callBack)
     }
     /**
      * 清空重置事件下的所有处理函数
-     * @param zeroLiteClass 类名
+     * @param zlec 类名
      */
-    clear(zeroLiteClass: new () => ZeroLiteEvent): void {
-        this.pool.set(zeroLiteClass, new EventSet());
+    clear(zlec: ZLEC): void {
+        this.pool.set(zlec, new EventSet());
     }
 }
